@@ -23,7 +23,6 @@ class Client:
     INIT    = 0
     READY   = 1
     PLAYING = 2
-    state   = INIT
 
     SETUP    = 0
     PLAY     = 1
@@ -42,6 +41,7 @@ class Client:
         self.requestSent = -1
         self.teardownAcked = 0
         self.frameNbr    = 0
+        self.state       = self.INIT   # instance attribute — tránh shared state
         self.isHD        = False        # False = SD/UDP, True = HD/TCP
 
         # Frame buffer cho caching — thread-safe
@@ -157,7 +157,7 @@ class Client:
                     if marker == 1:
                         if seqNum > self.frameNbr:
                             self.frameNbr = seqNum
-                            imageFile = self.writeFrame(self.fragmentBuf)
+                            imageFile = self.writeFrame(self.fragmentBuf, seqNum)
                             self.frameBuffer.put(imageFile)
                         self.fragmentBuf = b''
 
@@ -219,14 +219,16 @@ class Client:
             except queue.Empty:
                 pass
 
-        if self.state == self.PLAYING:
+        if self.state == self.PLAYING or not self.frameBuffer.empty():
             self.master.after(33, self._drainFrameBuffer)   # ~30 fps
 
     # ── File & UI Helpers ──────────────────────────────────────────────────
 
-    def writeFrame(self, data):
-        """Ghi frame ra file tạm. Trả về tên file."""
-        cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
+    def writeFrame(self, data, frameNbr=None):
+        """Ghi frame ra file tạm với tên unique. Trả về tên file."""
+        # Dùng frameNbr làm suffix để tránh ghi đè giữa các frame
+        suffix = frameNbr if frameNbr is not None else self.frameNbr
+        cachename = CACHE_FILE_NAME + str(self.sessionId) + '-' + str(suffix) + CACHE_FILE_EXT
         with open(cachename, "wb") as f:
             f.write(data)
         return cachename
