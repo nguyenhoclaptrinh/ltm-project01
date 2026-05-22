@@ -103,13 +103,14 @@ class Client:
     def exitClient(self):
         """Teardown button handler."""
         self.sendRtspRequest(self.TEARDOWN)
-        self.master.destroy()
+        # Xóa cache trước khi destroy UI để tránh truy cập resource sau khi destroyed
         cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
         if os.path.exists(cachename):
             try:
                 os.remove(cachename)
             except Exception:
                 pass
+        self.master.destroy()
 
     def pauseMovie(self):
         """Pause button handler."""
@@ -310,27 +311,30 @@ class Client:
 
     def parseRtspReply(self, data):
         """Phân tích RTSP reply và cập nhật trạng thái Client."""
-        lines  = data.split('\n')
-        seqNum = int(lines[1].split(' ')[1])
+        try:
+            lines  = data.split('\n')
+            seqNum = int(lines[1].split(' ')[1])
 
-        if seqNum == self.rtspSeq:
-            session = int(lines[2].split(' ')[1])
-            if self.sessionId == 0:
-                self.sessionId = session
+            if seqNum == self.rtspSeq:
+                session = int(lines[2].split(' ')[1])
+                if self.sessionId == 0:
+                    self.sessionId = session
 
-            if self.sessionId == session:
-                if int(lines[0].split(' ')[1]) == 200:
-                    if self.requestSent == self.SETUP:
-                        self.state = self.READY
-                        self.openRtpPort()
-                    elif self.requestSent == self.PLAY:
-                        self.state = self.PLAYING
-                    elif self.requestSent == self.PAUSE:
-                        self.state = self.READY
-                        self.playEvent.set()
-                    elif self.requestSent == self.TEARDOWN:
-                        self.state = self.INIT
-                        self.teardownAcked = 1
+                if self.sessionId == session:
+                    if int(lines[0].split(' ')[1]) == 200:
+                        if self.requestSent == self.SETUP:
+                            self.state = self.READY
+                            self.openRtpPort()
+                        elif self.requestSent == self.PLAY:
+                            self.state = self.PLAYING
+                        elif self.requestSent == self.PAUSE:
+                            self.state = self.READY
+                            self.playEvent.set()
+                        elif self.requestSent == self.TEARDOWN:
+                            self.state = self.INIT
+                            self.teardownAcked = 1
+        except (ValueError, IndexError):
+            pass  # Bỏ qua reply không đúng định dạng
 
     def openRtpPort(self):
         """Mở UDP socket nhận RTP (chỉ dùng khi transport = UDP)."""

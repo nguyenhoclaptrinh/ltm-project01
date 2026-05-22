@@ -2,6 +2,7 @@
 @file test_rtp.py
 @description Safety net — Unit tests cho RtpPacket.encode()/decode().
              Chạy: python test_rtp.py
+             Tip Windows: set PYTHONUTF8=1 để bật UTF-8 mode nếu cần.
              Không cần GUI, không cần network.
 """
 
@@ -31,7 +32,7 @@ def test_encode_decode_roundtrip():
     assert pkt2.seqNum() == 42,       f"SeqNum sai: {pkt2.seqNum()}"
     assert pkt2.payloadType() == 26,  f"PayloadType sai: {pkt2.payloadType()}"
     assert pkt2.getPayload() == payload, "Payload bị hỏng sau encode/decode"
-    print("✅ test_encode_decode_roundtrip PASS")
+    print("[PASS] test_encode_decode_roundtrip")
 
 
 def test_version_field():
@@ -39,7 +40,7 @@ def test_version_field():
     pkt = RtpPacket()
     pkt.encode(2, 0, 0, 0, 1, 0, 26, 0, b'data')
     assert pkt.version() == 2, f"Version sai: {pkt.version()}"
-    print("✅ test_version_field PASS")
+    print("[PASS] test_version_field")
 
 
 def test_payload_type_mjpeg():
@@ -47,7 +48,7 @@ def test_payload_type_mjpeg():
     pkt = RtpPacket()
     pkt.encode(2, 0, 0, 0, 1, 0, 26, 0, b'data')
     assert pkt.payloadType() == 26, f"PayloadType sai: {pkt.payloadType()}"
-    print("✅ test_payload_type_mjpeg PASS")
+    print("[PASS] test_payload_type_mjpeg")
 
 
 def test_sequence_number_boundaries():
@@ -57,7 +58,7 @@ def test_sequence_number_boundaries():
         pkt.encode(2, 0, 0, 0, seqnum, 0, 26, 0, b'x')
         assert pkt.seqNum() == seqnum, \
             f"SeqNum={seqnum} bị lưu sai: {pkt.seqNum()}"
-    print("✅ test_sequence_number_boundaries PASS")
+    print("[PASS] test_sequence_number_boundaries")
 
 
 def test_empty_payload():
@@ -67,7 +68,7 @@ def test_empty_payload():
     assert pkt.getPayload() == b'', "Payload rỗng bị sai"
     assert len(pkt.getPacket()) == HEADER_SIZE, \
         f"Packet không đúng kích thước header: {len(pkt.getPacket())}"
-    print("✅ test_empty_payload PASS")
+    print("[PASS] test_empty_payload")
 
 
 def test_header_byte0_format():
@@ -76,7 +77,7 @@ def test_header_byte0_format():
     pkt.encode(2, 0, 0, 0, 1, 0, 26, 0, b'x')
     byte0 = pkt.header[0]
     assert (byte0 >> 6) == 2, f"2 bit đầu byte 0 sai: {byte0 >> 6}"
-    print("✅ test_header_byte0_format PASS")
+    print("[PASS] test_header_byte0_format")
 
 
 if __name__ == '__main__':
@@ -87,4 +88,4 @@ if __name__ == '__main__':
     test_sequence_number_boundaries()
     test_empty_payload()
     test_header_byte0_format()
-    print("\n✅ TẤT CẢ 6 TESTS PASS")
+    print("\n[PASS] Tat ca 6 tests deu thanh cong")

@@ -110,9 +110,7 @@ class ServerWorker:
     def sendRtp(self):
         """Gửi RTP packet qua UDP hoặc TCP. Có hỗ trợ Fragmentation (MTU-safe)."""
         while True:
-            self.clientInfo['event'].wait(0.05)
-
-            if self.clientInfo['event'].isSet():
+            if self.clientInfo['event'].wait(0.05):
                 break
 
             data = self.clientInfo['videoStream'].nextFrame()
