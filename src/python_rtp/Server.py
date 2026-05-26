@@ -27,7 +27,7 @@ class Server:
 
         # Đăng ký socket lắng nghe — data=None đánh dấu đây là socket accept
         sel.register(rtspSocket, selectors.EVENT_READ, data=None)
-        print(f'[Server] Lắng nghe cổng {SERVER_PORT} — chế độ I/O Multiplexing')
+        print(f'[Server] Listening on port {SERVER_PORT} - I/O Multiplexing mode')
 
         while True:
             events = sel.select(timeout=None)
@@ -39,7 +39,7 @@ class Server:
                     clientInfo = {'rtspSocket': (conn, addr)}
                     worker = ServerWorker(clientInfo)
                     sel.register(conn, selectors.EVENT_READ, data=worker)
-                    print(f'[Server] Client kết nối: {addr}')
+                    print(f'[Server] Client connected: {addr}')
                 else:
                     # Dữ liệu RTSP từ client đã kết nối
                     worker = key.data
@@ -51,11 +51,11 @@ class Server:
                             worker.processRtspRequest(data.decode('utf-8'))
                         else:
                             # Client ngắt kết nối
-                            print(f'[Server] Client ngắt kết nối')
+                            print(f'[Server] Client disconnected')
                             sel.unregister(conn)
                             conn.close()
                     except Exception as e:
-                        print(f'[Server] Lỗi đọc dữ liệu: {e}')
+                        print(f'[Server] Read error: {e}')
                         sel.unregister(conn)
                         conn.close()
 

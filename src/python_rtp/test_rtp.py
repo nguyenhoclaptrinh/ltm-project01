@@ -72,20 +72,97 @@ def test_empty_payload():
 
 
 def test_header_byte0_format():
-    """Byte 0: V=2 → 2 bit đầu phải là '10' (binary)."""
+    """Byte 0: V=2 -> 2 MSBs must be '10' (binary)."""
     pkt = RtpPacket()
     pkt.encode(2, 0, 0, 0, 1, 0, 26, 0, b'x')
     byte0 = pkt.header[0]
-    assert (byte0 >> 6) == 2, f"2 bit đầu byte 0 sai: {byte0 >> 6}"
+    assert (byte0 >> 6) == 2, f"2 MSBs of byte 0 wrong: {byte0 >> 6}"
     print("[PASS] test_header_byte0_format")
 
 
+def test_marker_bit():
+    """Marker bit must be set correctly in byte 1."""
+    # marker=0
+    pkt0 = RtpPacket()
+    pkt0.encode(2, 0, 0, 0, 1, 0, 26, 0, b'data')
+    assert (pkt0.header[1] >> 7) == 0, "Marker should be 0"
+
+    # marker=1
+    pkt1 = RtpPacket()
+    pkt1.encode(2, 0, 0, 0, 1, 1, 26, 0, b'data')
+    assert (pkt1.header[1] >> 7) == 1, "Marker should be 1"
+
+    # PT must still be 26 with marker set
+    assert pkt1.payloadType() == 26, f"PT wrong with marker: {pkt1.payloadType()}"
+    print("[PASS] test_marker_bit")
+
+
+def test_hd_video_stream_single_frame():
+    """HDVideoStream must extract a single JPEG frame from SOI..EOI."""
+    import tempfile
+    from VideoStream import HDVideoStream
+
+    # Craft a minimal MJPEG: SOI + payload + EOI
+    frame_data = b'\xff\xd8' + b'\x00' * 100 + b'\xff\xd9'
+    with tempfile.NamedTemporaryFile(suffix='.mjpeg', delete=False) as f:
+        f.write(frame_data)
+        tmpname = f.name
+
+    try:
+        vs = HDVideoStream(tmpname)
+        frame = vs.nextFrame()
+        assert frame == frame_data, f"Frame mismatch: {len(frame)} vs {len(frame_data)}"
+        assert vs.frameNbr() == 1, f"frameNbr wrong: {vs.frameNbr()}"
+
+        # No more frames
+        frame2 = vs.nextFrame()
+        assert frame2 == b'', "Should return empty after last frame"
+    finally:
+        vs.file.close()
+        os.remove(tmpname)
+    print("[PASS] test_hd_video_stream_single_frame")
+
+
+def test_hd_video_stream_multiple_frames():
+    """HDVideoStream must extract multiple JPEG frames."""
+    import tempfile
+    from VideoStream import HDVideoStream
+
+    frame1 = b'\xff\xd8' + b'\x01' * 50 + b'\xff\xd9'
+    frame2 = b'\xff\xd8' + b'\x02' * 200 + b'\xff\xd9'
+    frame3 = b'\xff\xd8' + b'\x03' * 10 + b'\xff\xd9'
+
+    with tempfile.NamedTemporaryFile(suffix='.mjpeg', delete=False) as f:
+        f.write(frame1 + frame2 + frame3)
+        tmpname = f.name
+
+    try:
+        vs = HDVideoStream(tmpname)
+        r1 = vs.nextFrame()
+        r2 = vs.nextFrame()
+        r3 = vs.nextFrame()
+        r4 = vs.nextFrame()
+
+        assert r1 == frame1, "Frame 1 mismatch"
+        assert r2 == frame2, "Frame 2 mismatch"
+        assert r3 == frame3, "Frame 3 mismatch"
+        assert r4 == b'', "Should return empty after last frame"
+        assert vs.frameNbr() == 3, f"frameNbr wrong: {vs.frameNbr()}"
+    finally:
+        vs.file.close()
+        os.remove(tmpname)
+    print("[PASS] test_hd_video_stream_multiple_frames")
+
+
 if __name__ == '__main__':
-    print("=== Safety Net Tests — RtpPacket ===\n")
+    print("=== Safety Net Tests ===\n")
     test_encode_decode_roundtrip()
     test_version_field()
     test_payload_type_mjpeg()
     test_sequence_number_boundaries()
     test_empty_payload()
     test_header_byte0_format()
-    print("\n[PASS] Tat ca 6 tests deu thanh cong")
+    test_marker_bit()
+    test_hd_video_stream_single_frame()
+    test_hd_video_stream_multiple_frames()
+    print("\n[PASS] All 9 tests passed")

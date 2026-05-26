@@ -10,7 +10,7 @@
 from tkinter import *
 import tkinter.messagebox
 from PIL import Image, ImageTk
-import socket, threading, sys, os, queue
+import socket, threading, sys, os, queue, glob
 
 from RtpPacket import RtpPacket
 
@@ -91,9 +91,20 @@ class Client:
     # ── Button Handlers ────────────────────────────────────────────────────
 
     def _onHdToggle(self):
-        self.isHD = bool(self.hdVar.get())
+        """Handle HD/SD toggle. Auto re-SETUP if session is active."""
+        newHD = bool(self.hdVar.get())
+        if newHD == self.isHD:
+            return
+        self.isHD = newHD
         mode = "HD/TCP" if self.isHD else "SD/UDP"
-        self.statusLabel.config(text=f"Chế độ: {mode}")
+        self.statusLabel.config(text=f"Mode: {mode}")
+
+        # Auto re-SETUP if already in READY or PLAYING state
+        if self.state in (self.READY, self.PLAYING):
+            # Teardown current session
+            self.sendRtspRequest(self.TEARDOWN)
+            # Wait briefly for teardown to process, then reconnect and setup
+            self.master.after(300, self._reconnectAndSetup)
 
     def setupMovie(self):
         """Setup button handler."""
@@ -103,14 +114,42 @@ class Client:
     def exitClient(self):
         """Teardown button handler."""
         self.sendRtspRequest(self.TEARDOWN)
-        # Xóa cache trước khi destroy UI để tránh truy cập resource sau khi destroyed
-        cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-        if os.path.exists(cachename):
+        # Cleanup all cache files for this session
+        self._cleanupCache()
+        self.master.destroy()
+
+    def _reconnectAndSetup(self):
+        """Reconnect to server and send SETUP (used after HD/SD toggle)."""
+        try:
+            self.rtspSocket.close()
+        except Exception:
+            pass
+        # Reset state for fresh session
+        self.state = self.INIT
+        self.sessionId = 0
+        self.rtspSeq = 0
+        self.frameNbr = 0
+        self.teardownAcked = 0
+        self.fragmentBuf = b''
+        self.currentFragSeq = -1
+        # Clear frame buffer
+        while not self.frameBuffer.empty():
             try:
-                os.remove(cachename)
+                self.frameBuffer.get_nowait()
+            except queue.Empty:
+                break
+        self._cleanupCache()
+        self.connectToServer()
+        self.setupMovie()
+
+    def _cleanupCache(self):
+        """Remove all cache files for current session."""
+        pattern = CACHE_FILE_NAME + str(self.sessionId) + '*' + CACHE_FILE_EXT
+        for f in glob.glob(pattern):
+            try:
+                os.remove(f)
             except Exception:
                 pass
-        self.master.destroy()
 
     def pauseMovie(self):
         """Pause button handler."""
@@ -123,10 +162,14 @@ class Client:
             self.playEvent = threading.Event()
             self.playEvent.clear()
             self.bufferReady = False
-            self.statusLabel.config(text=f"Đang buffer... (0/{PREBUFFER_SIZE})")
-            threading.Thread(target=self.listenRtp, daemon=True).start()
+            self.statusLabel.config(text=f"Buffering... (0/{PREBUFFER_SIZE})")
+
+            if not self.isHD:
+                # UDP: start listener before PLAY (separate socket, no conflict)
+                threading.Thread(target=self.listenRtp, daemon=True).start()
+            # TCP: listenRtp will be started by parseRtspReply after PLAY reply
+
             self.sendRtspRequest(self.PLAY)
-            # Bắt đầu vòng lặp drain buffer trên main thread
             self.master.after(33, self._drainFrameBuffer)
 
     # ── RTP Listening & Fragment Reassembly ────────────────────────────────
@@ -147,16 +190,16 @@ class Client:
                     seqNum = rtpPacket.seqNum()
                     marker = (rtpPacket.header[1] >> 7) & 1   # bit 8
 
-                    # Ghép mảnh: cùng seqNum → cùng frame
+                    # Fragment reassembly: same seqNum = same frame
                     if seqNum != self.currentFragSeq:
                         self.fragmentBuf    = rtpPacket.getPayload()
                         self.currentFragSeq = seqNum
                     else:
                         self.fragmentBuf += rtpPacket.getPayload()
 
-                    # Marker=1 → chunk cuối → frame hoàn chỉnh
+                    # Marker=1 = last chunk = complete frame
                     if marker == 1:
-                        if seqNum > self.frameNbr:
+                        if seqNum >= self.frameNbr:
                             self.frameNbr = seqNum
                             imageFile = self.writeFrame(self.fragmentBuf, seqNum)
                             self.frameBuffer.put(imageFile)
@@ -175,32 +218,50 @@ class Client:
                     break
 
     def _recvRtpTcp(self):
-        """Nhận một gói RTP qua TCP Interleaved (RFC 2326 §10.12).
+        """Read one RTP packet or RTSP reply from TCP interleaved socket.
 
-        Format: $ (1B) | channel (1B) | length big-endian (2B) | RTP data
+        TCP Interleaved (RFC 2326 s10.12):
+          RTP frame:  $ (0x24) | channel (1B) | length (2B big-endian) | data
+          RTSP reply: text starting with 'R' (e.g., 'RTSP/1.0 200 OK')
+
+        Returns RTP payload bytes, or None if RTSP reply was parsed instead.
         """
-        # Đọc 4-byte interleaved header
-        header = b''
-        while len(header) < 4:
-            chunk = self.rtspSocket.recv(4 - len(header))
-            if not chunk:
-                return None
-            header += chunk
-
-        if header[0] != 0x24:   # bỏ qua nếu không phải '$'
+        # Read first byte to determine data type
+        first = self._recv_exact(1)
+        if not first:
             return None
 
-        length = (header[2] << 8) | header[3]
+        if first[0] == 0x24:  # '$' = RTP interleaved frame
+            rest = self._recv_exact(3)
+            if not rest:
+                return None
+            length = (rest[1] << 8) | rest[2]
+            rtp_data = self._recv_exact(length)
+            return rtp_data
+        else:
+            # Text data: RTSP reply (e.g., for PAUSE/TEARDOWN during TCP playback)
+            buf = first
+            try:
+                more = self.rtspSocket.recv(1024)
+                if more:
+                    buf += more
+            except Exception:
+                pass
+            try:
+                self.parseRtspReply(buf.decode('utf-8'))
+            except Exception:
+                pass
+            return None
 
-        # Đọc đúng length bytes RTP data
-        rtp_data = b''
-        while len(rtp_data) < length:
-            chunk = self.rtspSocket.recv(length - len(rtp_data))
+    def _recv_exact(self, n):
+        """Read exactly n bytes from rtspSocket. Returns bytes or None."""
+        buf = b''
+        while len(buf) < n:
+            chunk = self.rtspSocket.recv(n - len(buf))
             if not chunk:
                 return None
-            rtp_data += chunk
-
-        return rtp_data
+            buf += chunk
+        return buf
 
     def _drainFrameBuffer(self):
         """Drain frame buffer trên main thread — an toàn với Tkinter."""
@@ -299,14 +360,26 @@ class Client:
         print('\nData sent:\n' + request)
 
     def recvRtspReply(self):
-        """Nhận RTSP reply từ server (chạy trên thread riêng)."""
+        """Receive RTSP replies from server (runs on separate thread)."""
         while True:
-            reply = self.rtspSocket.recv(1024)
+            try:
+                reply = self.rtspSocket.recv(1024)
+            except Exception:
+                break
             if reply:
-                self.parseRtspReply(reply.decode("utf-8"))
+                try:
+                    self.parseRtspReply(reply.decode('utf-8'))
+                except UnicodeDecodeError:
+                    pass  # Binary data received — ignore
             if self.requestSent == self.TEARDOWN:
-                self.rtspSocket.shutdown(socket.SHUT_RDWR)
-                self.rtspSocket.close()
+                try:
+                    self.rtspSocket.shutdown(socket.SHUT_RDWR)
+                    self.rtspSocket.close()
+                except Exception:
+                    pass
+                break
+            # TCP mode: stop after PLAY reply so listenRtp can take over
+            if self.isHD and self.state == self.PLAYING:
                 break
 
     def parseRtspReply(self, data):
@@ -327,6 +400,10 @@ class Client:
                             self.openRtpPort()
                         elif self.requestSent == self.PLAY:
                             self.state = self.PLAYING
+                            if self.isHD:
+                                # TCP: start RTP listener now that PLAY reply is received
+                                # recvRtspReply will exit, listenRtp takes over the socket
+                                threading.Thread(target=self.listenRtp, daemon=True).start()
                         elif self.requestSent == self.PAUSE:
                             self.state = self.READY
                             self.playEvent.set()

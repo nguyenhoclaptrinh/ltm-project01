@@ -8,7 +8,7 @@
 from random import randint
 import threading, socket
 
-from VideoStream import VideoStream
+from VideoStream import VideoStream, HDVideoStream
 from RtpPacket import RtpPacket
 
 MAX_PAYLOAD = 1400  # bytes — an toàn dưới MTU Ethernet (1500)
@@ -45,19 +45,22 @@ class ServerWorker:
         if requestType == self.SETUP:
             if self.state == self.INIT:
                 print("processing SETUP\n")
+
+                # Detect transport mode: UDP (SD) or TCP (HD)
+                transport_line = request[2] if len(request) > 2 else ''
+                self.clientInfo['transport'] = 'TCP' if 'RTP/TCP' in transport_line else 'UDP'
+
                 try:
-                    self.clientInfo['videoStream'] = VideoStream(filename)
+                    if self.clientInfo['transport'] == 'TCP':
+                        self.clientInfo['videoStream'] = HDVideoStream(filename)
+                    else:
+                        self.clientInfo['videoStream'] = VideoStream(filename)
                     self.state = self.READY
                 except IOError:
                     self.replyRtsp(self.FILE_NOT_FOUND_404, seq[1])
                     return
 
                 self.clientInfo['session'] = randint(100000, 999999)
-
-                # Phát hiện transport mode: UDP (SD) hoặc TCP (HD)
-                transport_line = request[2] if len(request) > 2 else ''
-                self.clientInfo['transport'] = 'TCP' if 'RTP/TCP' in transport_line else 'UDP'
-
                 self.replyRtsp(self.OK_200, seq[1])
 
                 # Lưu RTP port (chỉ dùng khi UDP)
@@ -133,7 +136,7 @@ class ServerWorker:
                             self.clientInfo['rtpSocket'].sendto(
                                 rtp_data, (address, port))
                 except Exception as e:
-                    print(f"[Server] Lỗi gửi RTP: {e}")
+                    print(f"[Server] RTP send error: {e}")
 
     def _sendRtpInterleaved(self, rtp_data):
         """Gửi RTP qua TCP dùng Interleaved Frame (RFC 2326 §10.12).
@@ -150,7 +153,7 @@ class ServerWorker:
         try:
             conn.sendall(bytes(header) + rtp_data)
         except Exception as e:
-            print(f"[Server] Lỗi TCP interleaved: {e}")
+            print(f"[Server] TCP interleaved error: {e}")
 
     def makeRtp(self, payload, frameNbr, marker=0):
         """Đóng gói chunk video thành gói RTP."""
@@ -170,8 +173,22 @@ class ServerWorker:
             try:
                 conn.send(reply.encode())
             except Exception as e:
-                print(f"[Server] Lỗi gửi RTSP reply: {e}")
+                print(f"[Server] RTSP reply error: {e}")
         elif code == self.FILE_NOT_FOUND_404:
+            reply = ('RTSP/1.0 404 FILE NOT FOUND\nCSeq: ' + seq +
+                     '\nSession: ' + str(self.clientInfo.get('session', 0)))
+            conn = self.clientInfo['rtspSocket'][0]
+            try:
+                conn.send(reply.encode())
+            except Exception:
+                pass
             print("404 NOT FOUND")
         elif code == self.CON_ERR_500:
+            reply = ('RTSP/1.0 500 CONNECTION ERROR\nCSeq: ' + seq +
+                     '\nSession: ' + str(self.clientInfo.get('session', 0)))
+            conn = self.clientInfo['rtspSocket'][0]
+            try:
+                conn.send(reply.encode())
+            except Exception:
+                pass
             print("500 CONNECTION ERROR")
