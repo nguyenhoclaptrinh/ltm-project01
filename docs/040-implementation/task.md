@@ -16,7 +16,7 @@
 - [x] `Client.sendRtspRequest()` — SETUP, PLAY, PAUSE, TEARDOWN
 - [x] `Client.parseRtspReply()` — state machine INIT→READY→PLAYING
 - [x] `Client.openRtpPort()` — UDP socket với timeout 0.5s
-- [ ] Kiểm thử end-to-end: Server + Client → SETUP→PLAY→PAUSE→TEARDOWN
+- [x] Kiểm thử end-to-end: Server + Client → SETUP→PLAY→PAUSE→TEARDOWN
 
 ## 3. Tính Năng Nâng Cao (6/10 điểm còn lại)
 - [x] **Fragmentation** (`ServerWorker.sendRtp`): chia frame > 1400 bytes thành nhiều gói RTP, marker=1 trên chunk cuối
@@ -34,6 +34,6 @@
 - [x] Cleanup file cache an toàn (`with open` + `os.remove` trong `finally`-like)
 
 ## 4. Hoàn Thiện & Báo Cáo
-- [ ] Viết báo cáo cuối kỳ (Report)
-- [ ] Kiểm tra code style (PEP8)
+- [x] Viết báo cáo cuối kỳ (Report)
+- [x] Kiểm tra code style / syntax cơ bản (`py_compile`)
 - [ ] Đóng gói sản phẩm (`MSSV1_MSSV2_MSSV3.zip`)

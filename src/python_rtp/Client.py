@@ -8,6 +8,7 @@
 """
 
 from tkinter import *
+from tkinter import ttk
 import tkinter.messagebox
 from PIL import Image, ImageTk
 import socket, threading, sys, os, queue, glob
@@ -43,61 +44,165 @@ class Client:
         self.frameNbr    = 0
         self.state       = self.INIT   # instance attribute — tránh shared state
         self.isHD        = False        # False = SD/UDP, True = HD/TCP
+        self.statusText  = "Ready"
 
         # Frame buffer cho caching — thread-safe
         self.frameBuffer    = queue.Queue()
         self.bufferReady    = False     # True khi đủ PREBUFFER_SIZE frames
         self.fragmentBuf    = b''       # buffer ghép mảnh RTP
         self.currentFragSeq = -1        # seqnum của frame đang ghép
+        self.cacheFiles     = set()      # Track cache files for cleanup
 
+        self._cleanupCache(all_sessions=True)
         self.createWidgets()
         self.connectToServer()
 
     def createWidgets(self):
         """Build GUI."""
-        # Nút điều khiển
-        self.setup = Button(self.master, width=20, padx=3, pady=3,
-                            text="Setup", command=self.setupMovie)
-        self.setup.grid(row=1, column=0, padx=2, pady=2)
+        self.master.geometry("800x520")
+        self.master.minsize(760, 500)
+        self.master.configure(bg="#f4f6f8")
+        self.master.rowconfigure(0, weight=1)
+        self.master.columnconfigure(0, weight=1)
 
-        self.start = Button(self.master, width=20, padx=3, pady=3,
-                            text="Play", command=self.playMovie)
-        self.start.grid(row=1, column=1, padx=2, pady=2)
+        style = ttk.Style(self.master)
+        style.configure("App.TFrame", background="#f4f6f8")
+        style.configure("Toolbar.TFrame", background="#f4f6f8")
+        style.configure("Status.TFrame", background="#eef2f6")
+        style.configure("StatusLabel.TLabel", background="#eef2f6", foreground="#5f6b7a")
+        style.configure("StatusValue.TLabel", background="#eef2f6", foreground="#17202a")
+        style.configure("Mode.TLabelframe", background="#f4f6f8")
+        style.configure("Mode.TLabelframe.Label", background="#f4f6f8", foreground="#3b4652")
 
-        self.pause = Button(self.master, width=20, padx=3, pady=3,
-                            text="Pause", command=self.pauseMovie)
-        self.pause.grid(row=1, column=2, padx=2, pady=2)
+        videoFrame = ttk.Frame(self.master, style="App.TFrame", padding=(12, 12, 12, 8))
+        videoFrame.grid(row=0, column=0, sticky=N+S+E+W)
+        videoFrame.rowconfigure(0, weight=1)
+        videoFrame.columnconfigure(0, weight=1)
 
-        self.teardown = Button(self.master, width=20, padx=3, pady=3,
-                               text="Teardown", command=self.exitClient)
-        self.teardown.grid(row=1, column=3, padx=2, pady=2)
+        self.label = Label(videoFrame, text="No video - click Setup then Play",
+                           bg="#111827", fg="#d1d5db", anchor=CENTER,
+                           font=("Segoe UI", 13))
+        self.label.grid(row=0, column=0, sticky=N+S+E+W)
 
-        # Checkbox chuyển đổi SD/HD
-        self.hdVar = IntVar()
-        self.hdCheck = Checkbutton(self.master, text="HD (TCP)",
-                                   variable=self.hdVar,
-                                   command=self._onHdToggle)
-        self.hdCheck.grid(row=2, column=0, columnspan=2, pady=2)
+        controlFrame = ttk.Frame(self.master, style="Toolbar.TFrame", padding=(12, 0, 12, 8))
+        controlFrame.grid(row=1, column=0, sticky=E+W)
+        for col in range(4):
+            controlFrame.columnconfigure(col, weight=1, uniform="actions")
 
-        # Nhãn hiển thị trạng thái buffer
-        self.statusLabel = Label(self.master, text="Sẵn sàng", fg="gray")
-        self.statusLabel.grid(row=2, column=2, columnspan=2, pady=2)
+        self.setup = ttk.Button(controlFrame, text="Setup", command=self.setupMovie)
+        self.setup.grid(row=0, column=0, sticky=E+W, padx=(0, 6), ipady=5)
 
-        # Label hiển thị video
-        self.label = Label(self.master, height=19)
-        self.label.grid(row=0, column=0, columnspan=4,
-                        sticky=W+E+N+S, padx=5, pady=5)
+        self.start = ttk.Button(controlFrame, text="Play", command=self.playMovie)
+        self.start.grid(row=0, column=1, sticky=E+W, padx=6, ipady=5)
+
+        self.pause = ttk.Button(controlFrame, text="Pause", command=self.pauseMovie)
+        self.pause.grid(row=0, column=2, sticky=E+W, padx=6, ipady=5)
+
+        self.teardown = ttk.Button(controlFrame, text="Teardown", command=self.exitClient)
+        self.teardown.grid(row=0, column=3, sticky=E+W, padx=(6, 0), ipady=5)
+
+        modeFrame = ttk.LabelFrame(controlFrame, text="Transport Mode",
+                                   style="Mode.TLabelframe", padding=(10, 4, 10, 6))
+        modeFrame.grid(row=1, column=0, columnspan=4, sticky=W, pady=(8, 0))
+
+        self.modeVar = StringVar(value="HD" if self.isHD else "SD")
+        self.sdRadio = ttk.Radiobutton(modeFrame, text="SD / UDP",
+                                       variable=self.modeVar, value="SD",
+                                       command=self._onModeChange)
+        self.sdRadio.grid(row=0, column=0, sticky=W, padx=(0, 18))
+
+        self.hdRadio = ttk.Radiobutton(modeFrame, text="HD / TCP",
+                                       variable=self.modeVar, value="HD",
+                                       command=self._onModeChange)
+        self.hdRadio.grid(row=0, column=1, sticky=W)
+
+        statusFrame = ttk.Frame(self.master, style="Status.TFrame", padding=(12, 6, 12, 8))
+        statusFrame.grid(row=2, column=0, sticky=E+W)
+        statusFrame.columnconfigure(8, weight=1)
+
+        ttk.Label(statusFrame, text="State:", style="StatusLabel.TLabel").grid(row=0, column=0, sticky=W)
+        self.stateValue = ttk.Label(statusFrame, style="StatusValue.TLabel")
+        self.stateValue.grid(row=0, column=1, sticky=W, padx=(4, 18))
+
+        ttk.Label(statusFrame, text="Transport:", style="StatusLabel.TLabel").grid(row=0, column=2, sticky=W)
+        self.transportValue = ttk.Label(statusFrame, style="StatusValue.TLabel")
+        self.transportValue.grid(row=0, column=3, sticky=W, padx=(4, 18))
+
+        ttk.Label(statusFrame, text="Session:", style="StatusLabel.TLabel").grid(row=0, column=4, sticky=W)
+        self.sessionValue = ttk.Label(statusFrame, style="StatusValue.TLabel")
+        self.sessionValue.grid(row=0, column=5, sticky=W, padx=(4, 18))
+
+        ttk.Label(statusFrame, text="Buffer:", style="StatusLabel.TLabel").grid(row=0, column=6, sticky=W)
+        self.bufferValue = ttk.Label(statusFrame, style="StatusValue.TLabel")
+        self.bufferValue.grid(row=0, column=7, sticky=W, padx=(4, 18))
+
+        self.statusLabel = ttk.Label(statusFrame, text=self.statusText,
+                                     style="StatusLabel.TLabel", anchor=E)
+        self.statusLabel.grid(row=0, column=8, sticky=E+W)
+
+        self._updateUiState()
 
     # ── Button Handlers ────────────────────────────────────────────────────
 
-    def _onHdToggle(self):
-        """Handle HD/SD toggle. Auto re-SETUP if session is active."""
-        newHD = bool(self.hdVar.get())
+    def _stateName(self):
+        """Return current RTSP state as display text."""
+        if self.state == self.READY:
+            return "READY"
+        if self.state == self.PLAYING:
+            return "PLAYING"
+        return "INIT"
+
+    def _transportName(self):
+        """Return selected transport mode as display text."""
+        return "HD/TCP" if self.isHD else "SD/UDP"
+
+    def _scheduleUiState(self):
+        """Safely refresh UI state from worker threads."""
+        try:
+            self.master.after(0, self._updateUiState)
+        except Exception:
+            pass
+
+    def _setStatus(self, text):
+        """Set bottom status text and schedule a safe UI refresh."""
+        self.statusText = text
+        self._scheduleUiState()
+
+    def _updateUiState(self):
+        """Synchronize buttons, status bar, and selected transport mode."""
+        if not hasattr(self, 'stateValue'):
+            return
+
+        self.modeVar.set("HD" if self.isHD else "SD")
+        session = str(self.sessionId) if self.sessionId else "-"
+        bufferSize = self.frameBuffer.qsize() if hasattr(self, 'frameBuffer') else 0
+
+        self.stateValue.config(text=self._stateName())
+        self.transportValue.config(text=self._transportName())
+        self.sessionValue.config(text=session)
+        self.bufferValue.config(text=f"{min(bufferSize, PREBUFFER_SIZE)}/{PREBUFFER_SIZE}")
+        self.statusLabel.config(text=self.statusText)
+
+        self.setup.config(state=NORMAL if self.state == self.INIT else DISABLED)
+        self.start.config(state=NORMAL if self.state == self.READY else DISABLED)
+        self.pause.config(state=NORMAL if self.state == self.PLAYING else DISABLED)
+        self.teardown.config(state=NORMAL if self.state != self.INIT else DISABLED)
+
+    def _showVideoPlaceholder(self):
+        """Reset the video area to its empty-state message."""
+        if hasattr(self, 'label'):
+            self.label.configure(image='', text="No video - click Setup then Play",
+                                 bg="#111827", fg="#d1d5db")
+            self.label.image = None
+
+    def _onModeChange(self):
+        """Handle SD/HD radio changes. Auto re-SETUP if session is active."""
+        newHD = self.modeVar.get() == "HD"
         if newHD == self.isHD:
             return
         self.isHD = newHD
-        mode = "HD/TCP" if self.isHD else "SD/UDP"
-        self.statusLabel.config(text=f"Mode: {mode}")
+        self._setStatus(f"Mode selected: {self._transportName()}")
+        print(f"[Client] mode={self._transportName()}")
 
         # Auto re-SETUP if already in READY or PLAYING state
         if self.state in (self.READY, self.PLAYING):
@@ -105,6 +210,12 @@ class Client:
             self.sendRtspRequest(self.TEARDOWN)
             # Wait briefly for teardown to process, then reconnect and setup
             self.master.after(300, self._reconnectAndSetup)
+        else:
+            self._updateUiState()
+
+    def _onHdToggle(self):
+        """Backward-compatible alias for the old HD checkbox handler."""
+        self._onModeChange()
 
     def setupMovie(self):
         """Setup button handler."""
@@ -114,12 +225,24 @@ class Client:
     def exitClient(self):
         """Teardown button handler."""
         self.sendRtspRequest(self.TEARDOWN)
-        # Cleanup all cache files for this session
-        self._cleanupCache()
+        if hasattr(self, 'playEvent'):
+            self.playEvent.set()
+        # Cho receiver thread một nhịp dừng trước khi dọn file tạm.
+        self.master.after(200, self._destroyAfterCleanup)
+
+    def _destroyAfterCleanup(self):
+        """Cleanup cache files, then close the GUI."""
+        self._clearFrameBuffer(delete_files=True)
+        self._cleanupCache(all_sessions=True)
         self.master.destroy()
 
     def _reconnectAndSetup(self):
         """Reconnect to server and send SETUP (used after HD/SD toggle)."""
+        oldSessionId = self.sessionId
+        if hasattr(self, 'playEvent'):
+            self.playEvent.set()
+        self._clearFrameBuffer(delete_files=True)
+        self._cleanupCache(oldSessionId)
         try:
             self.rtspSocket.close()
         except Exception:
@@ -132,24 +255,42 @@ class Client:
         self.teardownAcked = 0
         self.fragmentBuf = b''
         self.currentFragSeq = -1
-        # Clear frame buffer
-        while not self.frameBuffer.empty():
-            try:
-                self.frameBuffer.get_nowait()
-            except queue.Empty:
-                break
-        self._cleanupCache()
+        self.statusText = "Ready"
+        self._showVideoPlaceholder()
+        self._updateUiState()
         self.connectToServer()
         self.setupMovie()
 
-    def _cleanupCache(self):
-        """Remove all cache files for current session."""
-        pattern = CACHE_FILE_NAME + str(self.sessionId) + '*' + CACHE_FILE_EXT
-        for f in glob.glob(pattern):
+    def _clearFrameBuffer(self, delete_files=False):
+        """Clear queued frame file names and optionally delete the files."""
+        while not self.frameBuffer.empty():
             try:
-                os.remove(f)
-            except Exception:
-                pass
+                imageFile = self.frameBuffer.get_nowait()
+                if delete_files:
+                    self._deleteCacheFile(imageFile)
+            except queue.Empty:
+                break
+
+    def _deleteCacheFile(self, imageFile):
+        """Delete one cache file if it exists."""
+        try:
+            if imageFile and os.path.exists(imageFile):
+                os.remove(imageFile)
+        except Exception:
+            pass
+        self.cacheFiles.discard(imageFile)
+
+    def _cleanupCache(self, sessionId=None, all_sessions=False):
+        """Remove all cache files for current session."""
+        sessionId = self.sessionId if sessionId is None else sessionId
+        if all_sessions:
+            pattern = CACHE_FILE_NAME + '*' + CACHE_FILE_EXT
+        else:
+            pattern = CACHE_FILE_NAME + str(sessionId) + '*' + CACHE_FILE_EXT
+        for f in glob.glob(pattern):
+            self._deleteCacheFile(f)
+        for f in list(self.cacheFiles):
+            self._deleteCacheFile(f)
 
     def pauseMovie(self):
         """Pause button handler."""
@@ -162,7 +303,7 @@ class Client:
             self.playEvent = threading.Event()
             self.playEvent.clear()
             self.bufferReady = False
-            self.statusLabel.config(text=f"Buffering... (0/{PREBUFFER_SIZE})")
+            self._setStatus(f"Buffering... (0/{PREBUFFER_SIZE})")
 
             if not self.isHD:
                 # UDP: start listener before PLAY (separate socket, no conflict)
@@ -177,6 +318,8 @@ class Client:
     def listenRtp(self):
         """Lắng nghe RTP packets, ghép mảnh và đưa vào frame buffer."""
         while True:
+            if hasattr(self, 'playEvent') and self.playEvent.isSet():
+                break
             try:
                 if self.isHD:
                     data = self._recvRtpTcp()
@@ -268,11 +411,10 @@ class Client:
         bufSize = self.frameBuffer.qsize()
 
         if not self.bufferReady:
-            self.statusLabel.config(
-                text=f"Buffering... ({min(bufSize, PREBUFFER_SIZE)}/{PREBUFFER_SIZE})")
+            self._setStatus(f"Buffering... ({min(bufSize, PREBUFFER_SIZE)}/{PREBUFFER_SIZE})")
             if bufSize >= PREBUFFER_SIZE:
                 self.bufferReady = True
-                self.statusLabel.config(text="Dang phat...")
+                self._setStatus("Playing")
 
         if self.bufferReady and not self.frameBuffer.empty():
             try:
@@ -293,16 +435,20 @@ class Client:
         cachename = CACHE_FILE_NAME + str(self.sessionId) + '-' + str(suffix) + CACHE_FILE_EXT
         with open(cachename, "wb") as f:
             f.write(data)
+        self.cacheFiles.add(cachename)
         return cachename
 
     def updateMovie(self, imageFile):
         """Cập nhật frame lên GUI (gọi từ main thread)."""
         try:
-            photo = ImageTk.PhotoImage(Image.open(imageFile))
-            self.label.configure(image=photo, height=288)
+            with Image.open(imageFile) as image:
+                photo = ImageTk.PhotoImage(image.copy())
+            self.label.configure(image=photo, text='', bg="#111827", height=288)
             self.label.image = photo
         except Exception:
             pass
+        finally:
+            self._deleteCacheFile(imageFile)
 
     # ── RTSP Protocol ──────────────────────────────────────────────────────
 
@@ -357,7 +503,7 @@ class Client:
             return
 
         self.rtspSocket.send(request.encode())
-        print('\nData sent:\n' + request)
+        print(f'\n[Client] mode={self._transportName()}\nData sent:\n{request}')
 
     def recvRtspReply(self):
         """Receive RTSP replies from server (runs on separate thread)."""
@@ -397,19 +543,27 @@ class Client:
                     if int(lines[0].split(' ')[1]) == 200:
                         if self.requestSent == self.SETUP:
                             self.state = self.READY
+                            self._setStatus("Ready - click Play")
                             self.openRtpPort()
                         elif self.requestSent == self.PLAY:
                             self.state = self.PLAYING
+                            self._setStatus("Playing")
                             if self.isHD:
                                 # TCP: start RTP listener now that PLAY reply is received
                                 # recvRtspReply will exit, listenRtp takes over the socket
                                 threading.Thread(target=self.listenRtp, daemon=True).start()
                         elif self.requestSent == self.PAUSE:
                             self.state = self.READY
+                            self._setStatus("Paused")
                             self.playEvent.set()
                         elif self.requestSent == self.TEARDOWN:
                             self.state = self.INIT
                             self.teardownAcked = 1
+                            self._setStatus("Session closed")
+                            self._clearFrameBuffer(delete_files=True)
+                            self._cleanupCache(session)
+                            self.master.after(0, self._showVideoPlaceholder)
+                        self._scheduleUiState()
         except (ValueError, IndexError):
             pass  # Bỏ qua reply không đúng định dạng
 

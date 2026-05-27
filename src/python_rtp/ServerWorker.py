@@ -6,6 +6,7 @@
 """
 
 from random import randint
+import re
 import threading, socket
 
 from VideoStream import VideoStream, HDVideoStream
@@ -63,18 +64,21 @@ class ServerWorker:
                 self.clientInfo['session'] = randint(100000, 999999)
                 self.replyRtsp(self.OK_200, seq[1])
 
-                # Lưu RTP port (chỉ dùng khi UDP)
+                # Luu RTP port (chi dung khi UDP). Vi du header:
+                # Transport: RTP/UDP; client_port=26000
                 if self.clientInfo['transport'] == 'UDP':
-                    try:
-                        self.clientInfo['rtpPort'] = request[2].split(' ')[3]
-                    except (IndexError, ValueError):
-                        self.clientInfo['rtpPort'] = '25000'
+                    match = re.search(r'client_port=(\d+)', transport_line)
+                    self.clientInfo['rtpPort'] = match.group(1) if match else '25000'
+                    print(f"[Server] SETUP transport=UDP rtp_port={self.clientInfo['rtpPort']}")
+                else:
+                    print("[Server] SETUP transport=TCP interleaved")
 
         # ── PLAY ───────────────────────────────────────────────────────────
         elif requestType == self.PLAY:
             if self.state == self.READY:
                 print("processing PLAY\n")
                 self.state = self.PLAYING
+                print(f"[Server] PLAY transport={self.clientInfo.get('transport', 'UDP')}")
 
                 # Chỉ tạo UDP socket khi transport là UDP
                 if self.clientInfo.get('transport') != 'TCP':
@@ -104,6 +108,7 @@ class ServerWorker:
             if 'event' in self.clientInfo:
                 self.clientInfo['event'].set()
             self.replyRtsp(self.OK_200, seq[1])
+            self.state = self.INIT
             if 'rtpSocket' in self.clientInfo:
                 try:
                     self.clientInfo['rtpSocket'].close()

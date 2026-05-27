@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # IDEs
 .vscode/
@@ -12,11 +13,16 @@ __pycache__/
 # OS
 Thumbs.db
 .DS_Store
+~$*.docx
 
 # Archives
 *.zip
 *.rar
 *.7z
+
+# Runtime artifacts
+cache-*.jpg
+*.log
 
 # Agents
 .agents/
