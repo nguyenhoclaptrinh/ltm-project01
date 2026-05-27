@@ -1,116 +1,116 @@
 # Video Streaming with RTSP and RTP
 
-Python demo for streaming MJPEG video with **RTSP** as the control protocol and **RTP** as the media transport. The project implements the client-side RTSP state machine, server-side RTP packetization, frame fragmentation, SD/HD transport switching, client buffering, and a Tkinter GUI for playback control.
+Demo Python truyền video MJPEG với **RTSP** làm giao thức điều khiển và **RTP** làm giao thức truyền dữ liệu media. Dự án triển khai state machine RTSP phía client, đóng gói RTP phía server, phân mảnh frame, chuyển đổi SD/HD theo transport, buffering phía client và giao diện Tkinter để điều khiển phát video.
 
-## Features
+## Tính Năng
 
-- RTSP commands: `SETUP`, `PLAY`, `PAUSE`, `TEARDOWN`.
-- RTP packetization with a 12-byte header, RTP version `2`, and MJPEG payload type `26`.
-- Frame fragmentation for payloads larger than the MTU-safe payload size.
-- RTP over UDP for `SD / UDP` mode.
-- RTP over TCP interleaved for `HD / TCP` mode.
-- Client-side pre-buffering with `queue.Queue`.
-- Tkinter/ttk GUI with visible RTSP state, transport mode, session id, and buffer status.
-- Server-side RTSP socket handling with `selectors.DefaultSelector()`.
+- Lệnh RTSP: `SETUP`, `PLAY`, `PAUSE`, `TEARDOWN`.
+- Đóng gói RTP với header 12 bytes, RTP version `2` và MJPEG payload type `26`.
+- Phân mảnh frame khi payload lớn hơn kích thước an toàn theo MTU.
+- RTP over UDP cho mode `SD / UDP`.
+- RTP over TCP interleaved cho mode `HD / TCP`.
+- Pre-buffer phía client bằng `queue.Queue`.
+- Giao diện Tkinter/ttk hiển thị RTSP state, transport mode, session id và trạng thái buffer.
+- Server xử lý RTSP socket bằng `selectors.DefaultSelector()`.
 
-## Project Structure
+## Cấu Trúc Dự Án
 
 ```text
 .
-├── docs/                         # Requirements, architecture notes, implementation plan, report
-├── Project_01/                   # Original assignment assets
+├── docs/                         # Yêu cầu, ghi chú kiến trúc, kế hoạch triển khai, báo cáo
+├── Project_01/                   # Tài nguyên đề bài gốc
 ├── src/python_rtp/
-│   ├── Client.py                 # GUI client, RTSP requests, RTP receive/buffer logic
-│   ├── ClientLauncher.py         # Client entry point
-│   ├── Server.py                 # RTSP server using selectors
-│   ├── ServerWorker.py           # RTSP session handling and RTP streaming
-│   ├── RtpPacket.py              # RTP encode/decode
-│   ├── VideoStream.py            # MJPEG frame readers
-│   ├── movie.Mjpeg               # Sample video
+│   ├── Client.py                 # GUI client, RTSP requests, logic nhận/buffer RTP
+│   ├── ClientLauncher.py         # Entry point của client
+│   ├── Server.py                 # RTSP server dùng selectors
+│   ├── ServerWorker.py           # Xử lý RTSP session và stream RTP
+│   ├── RtpPacket.py              # Encode/decode RTP
+│   ├── VideoStream.py            # Đọc frame MJPEG
+│   ├── movie.Mjpeg               # Video mẫu
 │   ├── requirements.txt          # Python dependencies
 │   └── test_rtp.py               # Unit tests
 └── README.md
 ```
 
-## Getting Started
+## Cài Đặt Và Chạy
 
-Install dependencies:
+Cài dependencies:
 
 ```bash
 pip install -r src/python_rtp/requirements.txt
 ```
 
-Start the server:
+Chạy server:
 
 ```bash
 cd src/python_rtp
 python Server.py 8554
 ```
 
-Start the client in another terminal:
+Mở terminal khác và chạy client:
 
 ```bash
 cd src/python_rtp
 python ClientLauncher.py localhost 8554 26000 movie.Mjpeg
 ```
 
-## Usage
+## Cách Sử Dụng
 
-1. Select `SD / UDP` or `HD / TCP`.
-2. Click `Setup`.
-3. Click `Play`.
-4. Use `Pause` and `Play` to pause/resume.
-5. Click `Teardown` to close the RTSP session and clean temporary frame cache.
+1. Chọn `SD / UDP` hoặc `HD / TCP`.
+2. Bấm `Setup`.
+3. Bấm `Play`.
+4. Dùng `Pause` và `Play` để tạm dừng/tiếp tục.
+5. Bấm `Teardown` để đóng RTSP session và dọn cache frame tạm.
 
-The GUI status bar shows the current RTSP state, transport mode, session id, and buffer level.
+Thanh trạng thái trên GUI hiển thị RTSP state hiện tại, transport mode, session id và mức buffer.
 
 ## Streaming Modes
 
-| Mode | Transport | Description |
+| Mode | Transport | Mô tả |
 |---|---|---|
-| `SD / UDP` | RTP over UDP | Client sends `Transport: RTP/UDP; client_port=...`; server sends RTP packets to the selected UDP port. |
-| `HD / TCP` | RTP over TCP interleaved | Client sends `Transport: RTP/TCP`; server sends RTP frames through the RTSP TCP socket using `$ | channel | length | RTP data`. |
+| `SD / UDP` | RTP over UDP | Client gửi `Transport: RTP/UDP; client_port=...`; server gửi RTP packets đến UDP port đã chọn. |
+| `HD / TCP` | RTP over TCP interleaved | Client gửi `Transport: RTP/TCP`; server gửi RTP frames qua RTSP TCP socket với định dạng `$ | channel | length | RTP data`. |
 
-Both modes can use the same sample file, so visual quality may look the same unless a separate HD video file is provided. In this implementation, the main difference is the transport mechanism.
+Hai mode có thể dùng cùng file video mẫu, nên chất lượng hình ảnh có thể trông giống nhau nếu chưa cung cấp file HD riêng. Trong phiên bản này, khác biệt chính là cơ chế truyền tải.
 
-## Testing
+## Kiểm Thử
 
-Run unit tests:
+Chạy unit tests:
 
 ```bash
 cd src/python_rtp
 python test_rtp.py
 ```
 
-Check Python syntax:
+Kiểm tra cú pháp Python:
 
 ```bash
 python -m py_compile Client.py Server.py ServerWorker.py RtpPacket.py VideoStream.py ClientLauncher.py test_rtp.py
 ```
 
-Expected result:
+Kết quả mong đợi:
 
-- All 9 tests in `test_rtp.py` pass.
-- `py_compile` exits without errors.
+- Toàn bộ 9 tests trong `test_rtp.py` pass.
+- `py_compile` kết thúc không có lỗi.
 
-## Assignment Mapping
+## Mapping Với Yêu Cầu Bài Tập
 
-| Requirement | Main files |
+| Yêu cầu | File chính |
 |---|---|
 | RTSP client, RTP packetization, UDP, fragmentation | `Client.py`, `ServerWorker.py`, `RtpPacket.py` |
 | I/O multiplexing | `Server.py` |
 | HD streaming with TCP | `Client.py`, `ServerWorker.py`, `VideoStream.py` |
-| Client-side caching and SD/HD switching | `Client.py` |
-| Report | `docs/Report.md` |
+| Client-side caching và chuyển đổi SD/HD | `Client.py` |
+| Báo cáo | `docs/Report.md` |
 
-## Documentation
+## Tài Liệu
 
-- Assignment brief: `Project Socket Programming.md`
-- Technical report: `docs/Report.md`
-- Architecture notes: `docs/020-architecture/`
-- Implementation notes: `docs/040-implementation/`
+- Đề bài: `Project Socket Programming.md`
+- Báo cáo kỹ thuật: `docs/Report.md`
+- Ghi chú kiến trúc: `docs/020-architecture/`
+- Ghi chú triển khai: `docs/040-implementation/`
 
-## Notes
+## Ghi Chú
 
-- Runtime frame cache files use the pattern `cache-*.jpg` and are ignored by Git.
-- Server and client consoles print RTSP requests, sessions, and selected transport mode for demo/debugging.
+- File cache frame khi chạy có dạng `cache-*.jpg` và đã được ignore khỏi Git.
+- Console của server và client in RTSP requests, session và transport mode để hỗ trợ demo/debug.
