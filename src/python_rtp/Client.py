@@ -243,6 +243,23 @@ class Client:
             self.playEvent.set()
         self._clearFrameBuffer(delete_files=True)
         self._cleanupCache(oldSessionId)
+        # Close any existing RTP UDP socket to free the port before re-SETUP
+        try:
+            if hasattr(self, 'rtpSocket') and not self.isHD:
+                try:
+                    self.rtpSocket.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    self.rtpSocket.close()
+                except Exception:
+                    pass
+                try:
+                    del self.rtpSocket
+                except Exception:
+                    pass
+        except Exception:
+            pass
         try:
             self.rtspSocket.close()
         except Exception:
@@ -306,8 +323,15 @@ class Client:
             self._setStatus(f"Buffering... (0/{PREBUFFER_SIZE})")
 
             if not self.isHD:
-                # UDP: start listener before PLAY (separate socket, no conflict)
+                # UDP: ensure RTP UDP socket is open (may have been closed on PAUSE)
+                if not hasattr(self, 'rtpSocket'):
+                    self.openRtpPort()
+                # start listener before PLAY (separate socket, no conflict)
                 threading.Thread(target=self.listenRtp, daemon=True).start()
+            else:
+                # HD/TCP: ensure RTSP reply receiver is running so PLAY reply
+                # is read from the control socket and triggers listenRtp.
+                threading.Thread(target=self.recvRtspReply, daemon=True).start()
             # TCP: listenRtp will be started by parseRtspReply after PLAY reply
 
             self.sendRtspRequest(self.PLAY)
@@ -556,6 +580,25 @@ class Client:
                             self.state = self.READY
                             self._setStatus("Paused")
                             self.playEvent.set()
+                            # Close UDP RTP socket on PAUSE to release bound port so
+                            # the client can later re-bind (avoids "Unable to bind PORT" errors).
+                            if not self.isHD:
+                                try:
+                                    if hasattr(self, 'rtpSocket'):
+                                        try:
+                                            self.rtpSocket.shutdown(socket.SHUT_RDWR)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            self.rtpSocket.close()
+                                        except Exception:
+                                            pass
+                                        try:
+                                            del self.rtpSocket
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
                         elif self.requestSent == self.TEARDOWN:
                             self.state = self.INIT
                             self.teardownAcked = 1
@@ -563,6 +606,24 @@ class Client:
                             self._clearFrameBuffer(delete_files=True)
                             self._cleanupCache(session)
                             self.master.after(0, self._showVideoPlaceholder)
+                            # Ensure UDP socket is closed on TEARDOWN so port is released
+                            if not self.isHD:
+                                try:
+                                    if hasattr(self, 'rtpSocket'):
+                                        try:
+                                            self.rtpSocket.shutdown(socket.SHUT_RDWR)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            self.rtpSocket.close()
+                                        except Exception:
+                                            pass
+                                        try:
+                                            del self.rtpSocket
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
                         self._scheduleUiState()
         except (ValueError, IndexError):
             pass  # Bỏ qua reply không đúng định dạng
