@@ -52,6 +52,10 @@ Mở terminal khác và chạy client:
 ```bash
 cd src/python_rtp
 python ClientLauncher.py localhost 8554 26000 movie.Mjpeg
+
+python ClientLauncher.py localhost 8554 26000 AVATAR3_SD.Mjpeg
+python ClientLauncher.py localhost 8554 26002 AVATAR3_HD.Mjpeg
+python ClientLauncher.py localhost 8554 26004 AVATAR3_FHD.Mjpeg
 ```
 
 ## Cách Sử Dụng
