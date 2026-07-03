@@ -6,17 +6,66 @@ class VideoStream:
         except OSError:
             raise IOError
         self.frameNum = 0
+        self._buf = b''
+
+    def _read_jpeg_frame(self):
+        """Read a JPEG frame by scanning SOI/EOI markers."""
+        soi = b'\xff\xd8'
+        eoi = b'\xff\xd9'
+        chunk_size = 4096
+
+        while True:
+            chunk = self.file.read(chunk_size)
+            if not chunk and not self._buf:
+                return b''
+            if chunk:
+                self._buf += chunk
+
+            soi_pos = self._buf.find(soi)
+            if soi_pos == -1:
+                self._buf = self._buf[-1:] if self._buf else b''
+                if not chunk:
+                    return b''
+                continue
+
+            if soi_pos > 0:
+                self._buf = self._buf[soi_pos:]
+
+            eoi_pos = self._buf.find(eoi, 2)
+            if eoi_pos != -1:
+                frame = self._buf[:eoi_pos + 2]
+                self._buf = self._buf[eoi_pos + 2:]
+                self.frameNum += 1
+                return frame
+
+            if not chunk:
+                return b''
 
     def nextFrame(self):
         """Get next frame."""
-        data = self.file.read(5)  # Get the framelength from the first 5 bits
-        if data:
-            framelength = int(data)
+        if self._buf:
+            return self._read_jpeg_frame()
 
-            # Read the current frame
-            data = self.file.read(framelength)
+        pos = self.file.tell()
+        data = self.file.read(5)
+        if not data:
+            if self._buf:
+                return self._read_jpeg_frame()
+            return b''
+
+        try:
+            framelength = int(data)
+        except ValueError:
+            self.file.seek(pos)
+            return self._read_jpeg_frame()
+
+        frame = self.file.read(framelength)
+        if frame:
             self.frameNum += 1
-        return data
+            return frame
+
+        self.file.seek(pos)
+        return self._read_jpeg_frame()
 
     def frameNbr(self):
         """Get frame number."""
@@ -42,7 +91,7 @@ class HDVideoStream:
         self.frameNum = 0
         self._buf = b''
 
-    def nextFrame(self):
+    def _read_jpeg_frame(self):
         """Get next JPEG frame by scanning SOI/EOI markers."""
         CHUNK = 4096
 
@@ -53,33 +102,29 @@ class HDVideoStream:
             if chunk:
                 self._buf += chunk
 
-            # Find SOI marker
             soi_pos = self._buf.find(self.SOI)
             if soi_pos == -1:
-                # No SOI found — discard buffer keeping last byte (could be partial 0xff)
                 self._buf = self._buf[-1:] if self._buf else b''
                 if not chunk:
                     return b''
                 continue
 
-            # Trim anything before SOI
             if soi_pos > 0:
                 self._buf = self._buf[soi_pos:]
 
-            # Find EOI marker after SOI
             eoi_pos = self._buf.find(self.EOI, 2)
             if eoi_pos != -1:
-                # Complete frame found
                 frame = self._buf[:eoi_pos + 2]
                 self._buf = self._buf[eoi_pos + 2:]
                 self.frameNum += 1
                 return frame
 
-            # EOI not yet found — need more data
             if not chunk:
                 return b''
-            # continue reading
+
+    def nextFrame(self):
+        return self._read_jpeg_frame()
 
     def frameNbr(self):
         """Get frame number."""
-        return self.frameNum
+        return self.frameNum
